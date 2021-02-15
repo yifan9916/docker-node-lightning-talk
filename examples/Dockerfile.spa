@@ -1,0 +1,45 @@
+FROM node:14-alpine as base
+
+EXPOSE 8080
+ENV NODE_ENV=production \
+  PORT=8080 \
+  PATH=/node/node_modules/.bin:$PATH
+RUN apk add --no-cache tini git
+WORKDIR /node
+COPY package*.json ./
+RUN npm config list
+RUN npm install --only=production \
+  && npm cache clean --force
+ENTRYPOINT [ "/sbin/tini", "--" ]
+
+FROM base as dev
+ENV NODE_ENV=development
+WORKDIR /node/app
+RUN npm config list
+RUN npm install --only=development \
+  && npm cache clean --force
+CMD ["npm", "run", "start"]
+
+FROM dev as test
+COPY . .
+RUN npm audit || true
+RUN npm run test:ci
+
+FROM test as source
+ENV NODE_ENV=production
+RUN npm run build
+
+FROM nginx:alpine
+
+LABEL org.opencontainers.image.authors=yifan.9916@gmail.com
+LABEL org.opencontainers.image.title="SPA Example"
+LABEL org.opencontainers.image.licenses=MIT
+LABEL yifan.nodeversion=$NODE_VERSION
+
+EXPOSE 80
+WORKDIR /srv/www
+COPY nginx /etc/nginx
+COPY --from=source /node/app/dist .
+
+HEALTHCHECK --interval=1m --timeout=3s \
+  CMD [ "wget", "-q", "0.0.0.0:80" ] || exit 1
